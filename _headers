@@ -14,5 +14,25 @@
 /index.html
   Cache-Control: no-cache
 
+/favicon.ico
+  Cache-Control: no-cache
+  Content-Type: image/x-icon
+
+/favicon-32.png
+  Cache-Control: no-cache
+  Content-Type: image/png
+
+/apple-touch-icon.png
+  Cache-Control: no-cache
+  Content-Type: image/png
+
+/apple-touch-icon-precomposed.png
+  Cache-Control: no-cache
+  Content-Type: image/png
+
+/*-v5.png
+  Cache-Control: public, max-age=31536000, immutable
+  Content-Type: image/png
+
 /icons/*
   Cache-Control: public, max-age=31536000, immutable

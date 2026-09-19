@@ -1,15 +1,19 @@
-const CACHE_NAME = "scrytable-shell-v4";
+const CACHE_NAME = "scrytable-shell-v6";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/pwa.js",
   "/manifest.webmanifest",
   "/offline.html",
-  "/icons/apple-touch-icon-v3.png",
-  "/icons/icon-192-v3.png",
-  "/icons/icon-512-v3.png",
-  "/icons/icon-512-maskable-v3.png",
-  "/icons/scrytable-logo-v3.png"
+  "/favicon.ico",
+  "/favicon-32.png",
+  "/apple-touch-icon.png",
+  "/apple-touch-icon-precomposed.png",
+  "/apple-touch-icon-v5.png",
+  "/icon-192-v5.png",
+  "/icon-512-v5.png",
+  "/icon-512-maskable-v5.png",
+  "/scrytable-logo-v5.png"
 ];
 const SHELL_PATHS = new Set(APP_SHELL);
 

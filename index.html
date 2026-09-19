@@ -5,14 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>ScryTable</title>
   <meta name="description" content="ScryTable — a Magic: The Gathering virtual tabletop for local and online play." />
-  <meta name="application-version" content="3.0.1" />
+  <meta name="application-version" content="3.0.3" />
   <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   <meta name="theme-color" content="#171513" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="ScryTable" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="apple-touch-icon" href="/icons/apple-touch-icon-v3.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v5.png" />
+  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon-precomposed.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://api.scryfall.com" />
@@ -616,7 +619,7 @@
 <!-- HOME -->
 <div id="screen-home" class="screen">
   <div style="text-align:center;margin-top:.5rem">
-    <img class="logo-title" src="/icons/scrytable-logo-v3.png" alt="ScryTable" width="600" height="600" />
+    <img class="logo-title" src="/scrytable-logo-v5.png" alt="ScryTable" width="600" height="600" />
     <div class="logo-sub">MTG Virtual Tabletop</div>
   </div>
   <div class="home-grid">
@@ -2853,6 +2856,19 @@ function genCode(){
     out+=chars.charAt(n%chars.length);
   }
   return out;
+}
+
+function cryptoRandomIndex(maxExclusive){
+  maxExclusive=Math.floor(Number(maxExclusive));
+  if(!Number.isFinite(maxExclusive)||maxExclusive<=0)throw new RangeError('Random range must be positive');
+  if(window.crypto&&window.crypto.getRandomValues){
+    var range=0x100000000;
+    var limit=range-(range%maxExclusive);
+    var values=new Uint32Array(1),value;
+    do{window.crypto.getRandomValues(values);value=values[0];}while(value>=limit);
+    return value%maxExclusive;
+  }
+  return Math.floor(Math.random()*maxExclusive);
 }
 
 function onHostFormatChange(){
