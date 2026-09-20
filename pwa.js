@@ -38,17 +38,39 @@
   // of making every screen calculate against a stale 100%.
   function syncViewportVars() {
     var vv = window.visualViewport;
-    var height = vv && vv.height ? vv.height : window.innerHeight;
-    var width = vv && vv.width ? vv.width : window.innerWidth;
-    if (height > 0) document.documentElement.style.setProperty('--app-height', Math.round(height) + 'px');
-    if (width > 0) document.documentElement.style.setProperty('--app-width', Math.round(width) + 'px');
+    // In iOS standalone mode visualViewport.height can exclude the status-bar
+    // region even though the layout viewport still begins at y=0. Using it
+    // there shortens the whole app, crowds the top safe area, and leaves a
+    // matching empty strip below the app. The standalone layout viewport
+    // already accounts for viewport-fit=cover and CSS safe-area insets.
+    var standalone = isStandalone();
+    var height = standalone
+      ? window.innerHeight
+      : (vv && vv.height ? vv.height : window.innerHeight);
+    var width = standalone
+      ? window.innerWidth
+      : (vv && vv.width ? vv.width : window.innerWidth);
+    var visualHeight = vv && vv.height ? vv.height : window.innerHeight;
+    var visualWidth = vv && vv.width ? vv.width : window.innerWidth;
+    var visualTop = vv && vv.offsetTop ? vv.offsetTop : 0;
+    var visualLeft = vv && vv.offsetLeft ? vv.offsetLeft : 0;
+    var keyboardInset = Math.max(0, window.innerHeight - visualHeight - visualTop);
+    var rootStyle = document.documentElement.style;
+    if (height > 0) rootStyle.setProperty('--app-height', Math.round(height) + 'px');
+    if (width > 0) rootStyle.setProperty('--app-width', Math.round(width) + 'px');
+    if (visualHeight > 0) rootStyle.setProperty('--visual-viewport-height', Math.round(visualHeight) + 'px');
+    if (visualWidth > 0) rootStyle.setProperty('--visual-viewport-width', Math.round(visualWidth) + 'px');
+    rootStyle.setProperty('--visual-viewport-top', Math.round(visualTop) + 'px');
+    rootStyle.setProperty('--visual-viewport-left', Math.round(visualLeft) + 'px');
+    rootStyle.setProperty('--keyboard-inset', Math.round(keyboardInset) + 'px');
+    document.documentElement.classList.toggle('keyboard-open', keyboardInset > 100);
   }
 
   function openPwaHelp() {
     if (typeof window.openModal !== 'function') return;
     var html =
       '<div class="modal-title">&#128241; Install &amp; Offline</div>' +
-      '<div style="max-height:72vh;overflow-y:auto;padding-right:.25rem">' +
+      '<div style="padding-right:.25rem">' +
         '<div class="pwa-help-section" style="border-top:0;padding-top:0;margin-top:0"><h3>Install on iPhone or iPad</h3>' +
           '<ol class="pwa-help-list">' +
             '<li>Open ScryTable in <strong>Safari</strong>. Installation is not available from most in-app browsers.</li>' +
@@ -117,6 +139,7 @@
   window.addEventListener('resize', syncViewportVars);
   window.addEventListener('orientationchange', function () {
     window.setTimeout(syncViewportVars, 50);
+    window.setTimeout(syncViewportVars, 350);
   });
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', syncViewportVars);

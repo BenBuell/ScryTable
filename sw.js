@@ -1,9 +1,7 @@
-const CACHE_NAME = "scrytable-shell-v7";
-// NOTE: "/index.html" is deliberately absent. Cloudflare Pages 307-redirects
-// /index.html -> / and /offline.html -> /offline, and Cache.put() throws a
-// TypeError on a redirected Response. Requesting "/" avoids the redirect.
+const CACHE_NAME = "scrytable-shell-v9";
 const APP_SHELL = [
   "/",
+  "/index.html",
   "/pwa.js",
   "/manifest.webmanifest",
   "/offline.html",
@@ -19,29 +17,10 @@ const APP_SHELL = [
 ];
 const SHELL_PATHS = new Set(APP_SHELL);
 
-// Cache each shell entry independently. cache.addAll() is atomic, so a single
-// 404 or redirect aborts the whole install and leaves the app with no cache at
-// all — which is exactly what happened while the icons were 404ing. Copying the
-// body into a fresh Response also strips the "redirected" flag that Cache.put()
-// rejects, so a redirecting path degrades instead of failing the install.
-function cacheShellAsset(cache, path) {
-  return fetch(path, { cache: "reload" })
-    .then((response) => {
-      if (!response.ok) throw new Error(path + " -> HTTP " + response.status);
-      return response.blob().then((body) => cache.put(path, new Response(body, {
-        status: 200,
-        headers: { "Content-Type": response.headers.get("Content-Type") || "application/octet-stream" }
-      })));
-    })
-    .catch((err) => {
-      console.warn("[sw] shell asset skipped:", err && err.message);
-    });
-}
-
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => Promise.all(APP_SHELL.map((path) => cacheShellAsset(cache, path))))
+      .then((cache) => cache.addAll(APP_SHELL))
       .then(() => self.skipWaiting())
   );
 });
@@ -64,6 +43,8 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // Lite is deliberately online-only even when hosted beside the PWA.
+  if (url.pathname.endsWith("/scrytable-lite.html")) return;
 
   const isNavigation = request.mode === "navigate";
   const isShellAsset = SHELL_PATHS.has(url.pathname);
@@ -73,22 +54,23 @@ self.addEventListener("fetch", (event) => {
     caches.match(request, { ignoreSearch: true }).then((cached) => {
       const networkFetch = fetch(request)
         .then((response) => {
-          if (response.ok && !response.redirected && response.type === "basic" && isShellAsset) {
+          if (response.ok && response.type === "basic" && isShellAsset) {
             const copy = response.clone();
             const cacheKey = url.pathname === "/" ? "/" : request;
-            caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, copy));
+            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, copy)).catch(console.warn));
           }
           return response;
         })
         .catch(() => {
+          if (cached) return cached;
           if (isNavigation) return caches.match("/offline.html");
-          return cached;
+          return Response.error();
         });
 
       // Cached shell assets render immediately while a successful network
       // response refreshes the cache. Network/API requests are never handled
       // here because cross-origin requests are returned above.
-      return cached || networkFetch;
+      return isNavigation ? networkFetch : (cached || networkFetch);
     })
   );
 });
