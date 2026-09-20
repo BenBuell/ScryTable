@@ -39,9 +39,8 @@
   function syncViewportVars() {
     var vv = window.visualViewport;
     // Installed iOS apps must use CSS viewport geometry, not a JS pixel
-    // snapshot. innerHeight can lag launch/resume/orientation changes.
-    // Removing the inline overrides restores the 100dvh (100vh fallback)
-    // declarations in :root; safe-area padding stays inside that full height.
+    // snapshot. The standalone CSS override selects stable 100vh sizing;
+    // normal Safari keeps dynamic visualViewport sizing for its browser chrome.
     var standalone = isStandalone();
     var height = vv && vv.height ? vv.height : window.innerHeight;
     var width = vv && vv.width ? vv.width : window.innerWidth;
@@ -136,6 +135,7 @@
     refreshInstallBanner();
     window.setTimeout(maybeShowInstalledDataNotice, 700);
   });
+  window.addEventListener('pageshow', syncViewportVars);
   window.addEventListener('resize', syncViewportVars);
   window.addEventListener('orientationchange', function () {
     window.setTimeout(syncViewportVars, 50);
@@ -145,5 +145,11 @@
     window.visualViewport.addEventListener('resize', syncViewportVars);
     window.visualViewport.addEventListener('scroll', syncViewportVars);
   }
-  document.addEventListener('visibilitychange', refreshInstallBanner);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') {
+      window.requestAnimationFrame(syncViewportVars);
+      window.setTimeout(syncViewportVars, 250);
+    }
+    refreshInstallBanner();
+  });
 }());

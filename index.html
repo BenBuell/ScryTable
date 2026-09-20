@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>ScryTable</title>
   <meta name="description" content="ScryTable — a Magic: The Gathering virtual tabletop for local and online play." />
-  <meta name="application-version" content="3.0.7" />
+  <meta name="application-version" content="3.0.8" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
@@ -573,6 +573,29 @@
   .modal-backdrop{padding-top:max(1rem,env(safe-area-inset-top));padding-right:max(1rem,env(safe-area-inset-right));padding-bottom:max(1rem,env(safe-area-inset-bottom));padding-left:max(1rem,env(safe-area-inset-left))}
   #card-zoom>button{top:max(.9rem,calc(.9rem + env(safe-area-inset-top)));right:max(.9rem,calc(.9rem + env(safe-area-inset-right)))}
 }
+
+/* Installed PWA viewport override. Keep the containing block stable on iOS
+   standalone, where dynamic viewport units can initialize incorrectly. */
+@media all and (display-mode: standalone) {
+  :root {
+    --app-height:100vh;
+    --app-width:100vw;
+  }
+  html,body {
+    width:100%;
+    height:100vh;
+    min-height:100vh;
+    overflow:hidden;
+  }
+  .screen,#screen-game,.rules-screen {
+    position:fixed;
+    inset:0;
+    width:auto;
+    height:auto;
+    min-height:0;
+  }
+}
+/* End installed PWA viewport override */
 
 /* Safari zooms focused form controls below 16px. Apply the larger type only
    on touch-first devices so desktop density and card controls stay unchanged. */

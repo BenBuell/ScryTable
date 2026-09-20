@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>ScryTable Lite</title>
   <meta name="description" content="ScryTable — a Magic: The Gathering virtual tabletop for local and online play." />
-  <meta name="application-version" content="3.0.7-lite" />
+  <meta name="application-version" content="3.0.8-lite" />
 
 
 
@@ -571,7 +571,6 @@
   .modal-backdrop{padding-top:max(1rem,env(safe-area-inset-top));padding-right:max(1rem,env(safe-area-inset-right));padding-bottom:max(1rem,env(safe-area-inset-bottom));padding-left:max(1rem,env(safe-area-inset-left))}
   #card-zoom>button{top:max(.9rem,calc(.9rem + env(safe-area-inset-top)));right:max(.9rem,calc(.9rem + env(safe-area-inset-right)))}
 }
-
 /* Safari zooms focused form controls below 16px. Apply the larger type only
    on touch-first devices so desktop density and card controls stay unchanged. */
 @media (hover:none) and (pointer:coarse) {
@@ -8048,9 +8047,8 @@ document.addEventListener('DOMContentLoaded',function(){
   function syncViewportVars() {
     var vv = window.visualViewport;
     // Installed iOS apps must use CSS viewport geometry, not a JS pixel
-    // snapshot. innerHeight can lag launch/resume/orientation changes.
-    // Removing the inline overrides restores the 100dvh (100vh fallback)
-    // declarations in :root; safe-area padding stays inside that full height.
+    // snapshot. The standalone CSS override selects stable 100vh sizing;
+    // normal Safari keeps dynamic visualViewport sizing for its browser chrome.
     var standalone = false;
     var height = vv && vv.height ? vv.height : window.innerHeight;
     var width = vv && vv.width ? vv.width : window.innerWidth;
