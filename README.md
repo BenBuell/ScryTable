@@ -32,7 +32,7 @@ The service worker caches only the same-origin app shell. Card images, Scryfall 
 
 ## Local development
 
-Serve the repo over HTTP — do not open `index.html` directly with `file://`, as service workers require a proper web origin.
+The **main app** (`index.html`) must be served over HTTP — opening it directly with `file://` will not work, as service workers and PWA installation require a proper web origin.
 
 ```bash
 python3 -m http.server 8080
@@ -42,4 +42,8 @@ Then open `http://localhost:8080/` in your browser.
 
 ## ScryTable Lite
 
-ScryTable Lite can be run directly from `file://` by opening `scrytable-lite.html` in a browser.
+**ScryTable Lite** (`scrytable-lite.html`) is a standalone single-file version of the app that does not use a service worker. It can be opened directly from `file://` — no local server needed. Just download `scrytable-lite.html` and open it in your browser.
+
+## AI Disclaimer
+
+While many dozens of hours of human development went into ScryTable, AI was used as a tool throughout the development process.
