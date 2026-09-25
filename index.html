@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>ScryTable</title>
   <meta name="description" content="ScryTable — a Magic: The Gathering virtual tabletop for local and online play." />
-  <meta name="application-version" content="3.0.8" />
+  <meta name="application-version" content="3.1.0" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
@@ -1187,6 +1187,16 @@ function orderedPlayerIds(players){
     return as-bs||((a[1]&&a[1].joined||0)-(b[1]&&b[1].joined||0));
   }).map(function(e){return e[0];});
 }
+function getRoomTurnState(room){
+  room=room||{};
+  var state=room.turnState||{};
+  return {
+    currentTurn:state.currentTurn||room.currentTurn||null,
+    turnCycle:state.turnCycle||room.turnCycle||1,
+    turnChangedAt:state.turnChangedAt||room.turnChangedAt||room.lastActive||Date.now(),
+    turnReady:state.turnReady||room.turnReady||{}
+  };
+}
 function roomPlayerIsPresent(p){
   if(!p||p.departure==='left')return false;
   if(p.online!==false)return true;
@@ -1234,9 +1244,13 @@ function markPlayerLeft(){
     return fbDB.ref('rooms/'+room).transaction(function(data){
       if(!data)return data;
       var order=orderedPlayerIds(data.players||{}).filter(function(id){return id!==pid;});
-      if(data.currentTurn===pid){
+      var turnState=getRoomTurnState(data);
+      if(turnState.currentTurn===pid){
         var next=order.find(function(id){return roomPlayerIsPresent((data.players||{})[id]);});
-        if(next){data.currentTurn=next;data.turnChangedAt=Date.now();data.turnReady={};}
+        if(next){
+          turnState.currentTurn=next;turnState.turnChangedAt=Date.now();turnState.turnReady={};
+          data.currentTurn=next;data.turnChangedAt=turnState.turnChangedAt;data.turnReady={};data.turnState=turnState;
+        }
       }
       if(data.hostId===pid){
         var nextHost=order.find(function(id){return roomPlayerIsPresent((data.players||{})[id]);});
@@ -1611,6 +1625,21 @@ function zoomCard(card,zone) {
 function closeZoom(){document.getElementById('card-zoom').classList.add('hidden');_zoomFlipCard=null;_zoomFlipZone=null;}
 
 var sfCache={};
+var sfInflight=Object.create(null);
+var sfNegativeCache=Object.create(null);
+function sfCacheKey(name){return String(name||'').trim().toLowerCase();}
+function getCachedScryfallCard(name){
+  if(!name)return null;
+  return sfCache[name]||sfCache[sfCacheKey(name)]||null;
+}
+function cacheScryfallCard(name,card){
+  if(!card)return;
+  var original=String(name||'').trim(),key=sfCacheKey(name),canonical=card.name||name;
+  if(original)sfCache[original]=card;
+  if(key)sfCache[key]=card;
+  if(canonical)sfCache[canonical]=card;
+  return card;
+}
 // Global interaction guard — prevents clicks passing through layers
 var _interactTs=0;
 function _canAct(){
@@ -1619,15 +1648,30 @@ function _canAct(){
   _interactTs=now;
   return true;
 }
-async function fetchCard(name) {
-  if(sfCache[name]) return sfCache[name];
-  try {
-    var r=await fetch('https://api.scryfall.com/cards/named?fuzzy='+encodeURIComponent(name));
-    if(!r.ok) return null;
-    var c=await r.json();
-    sfCache[name]=c;
-    return c;
-  } catch(e) { return null; }
+function fetchCard(name) {
+  var key=sfCacheKey(name);
+  if(!key)return Promise.resolve(null);
+  var cached=getCachedScryfallCard(name);
+  if(cached)return Promise.resolve(cached);
+  if(sfInflight[key])return sfInflight[key];
+  if(sfNegativeCache[key]&&sfNegativeCache[key]>Date.now())return Promise.resolve(null);
+  sfInflight[key]=fetch('https://api.scryfall.com/cards/named?fuzzy='+encodeURIComponent(name))
+    .then(function(r){
+      if(!r.ok){
+        // Avoid retrying a missing/temporarily unavailable card on every
+        // opponent-board rerender or tap.
+        sfNegativeCache[key]=Date.now()+(r.status===404?5*60*1000:20*1000);
+        return null;
+      }
+      return r.json();
+    })
+    .then(function(card){
+      if(card)cacheScryfallCard(name,card);
+      return card||null;
+    })
+    .catch(function(){sfNegativeCache[key]=Date.now()+20*1000;return null;})
+    .then(function(card){delete sfInflight[key];return card;});
+  return sfInflight[key];
 }
 
 // Batch-fetch up to 75 cards per request using Scryfall's collection endpoint.
@@ -1638,8 +1682,9 @@ async function fetchCardsBatch(names) {
   // Deduplicate and filter already cached
   var unique=[];
   names.forEach(function(n){
-    if(sfCache[n]){result[n]=sfCache[n];}
-    else if(unique.indexOf(n)<0){unique.push(n);}
+    var cached=getCachedScryfallCard(n);
+    if(cached){result[n]=cached;}
+    else if(!unique.some(function(existing){return sfCacheKey(existing)===sfCacheKey(n);})){unique.push(n);}
   });
   if(!unique.length) return result;
 
@@ -1656,7 +1701,7 @@ async function fetchCardsBatch(names) {
         var body=await r.json();
         (body.data||[]).forEach(function(c){
           var key=c.name;
-          sfCache[key]=c;
+          cacheScryfallCard(key,c);
           result[key]=c;
         });
         // For not_found cards, try individual fuzzy fetch as fallback
@@ -2858,10 +2903,14 @@ function reconcileRoom(roomRef,myPid){
         if(players[pid]&&!players[pid].team){players[pid].team=teamCounts.A<=teamCounts.B?'A':'B';teamCounts[players[pid].team]++;changed=true;}
       });
     }
-    var turnPlayer=players[room.currentTurn];
-    if(room.currentTurn&&!roomPlayerIsPresent(turnPlayer)&&now-(room.turnChangedAt||room.lastActive||now)>60000){
-      var nextTurn=presentIds.find(function(pid){return pid!==room.currentTurn;})||presentIds[0];
-      if(nextTurn){room.currentTurn=nextTurn;room.turnChangedAt=now;room.turnReady={};changed=true;}
+    var roomTurn=getRoomTurnState(room);
+    var turnPlayer=players[roomTurn.currentTurn];
+    if(roomTurn.currentTurn&&!roomPlayerIsPresent(turnPlayer)&&now-(roomTurn.turnChangedAt||room.lastActive||now)>60000){
+      var nextTurn=presentIds.find(function(pid){return pid!==roomTurn.currentTurn;})||presentIds[0];
+      if(nextTurn){
+        roomTurn.currentTurn=nextTurn;roomTurn.turnChangedAt=now;roomTurn.turnReady={};room.turnState=roomTurn;
+        room.currentTurn=nextTurn;room.turnChangedAt=now;room.turnReady={};changed=true;
+      }
     }
     if(changed){if(wasHost)room.seatOrder=orderedPlayerIds(room.players);room.lastActive=now;}
     return changed ? room : undefined;
@@ -2939,6 +2988,12 @@ function computeTeams(players){
   order.forEach(function(pid,i){teams[pid]=(players[pid]&&players[pid].team)||(i%2===0?'A':'B');});
   return teams;
 }
+function nextRoomTeam(players){
+  var counts={A:0,B:0};
+  var teams=computeTeams(players||{});
+  Object.keys(teams).forEach(function(pid){if(teams[pid]==='A'||teams[pid]==='B')counts[teams[pid]]++;});
+  return counts.A<=counts.B?'A':'B';
+}
 // Two-Headed Giant (rule 810/805 "shared team turns"): the whole team takes one
 // turn together — both teammates untap, draw, play lands and act simultaneously,
 // and both must ready up before the turn passes to the other team. `currentTurn`
@@ -2982,7 +3037,7 @@ async function hostRoom(){
     var hostDeckSummary=computeDeckLegalitySummary(hostDeck);
     var now=Date.now();
     var pd={};pd[playerId]={name:hostName,life:hostLife,poison:0,experience:0,energy:0,customCounters:{},joined:now,seat:cryptoRandomIndex(2147483647),slotOwner:fbAuth.currentUser.uid,team:format==='2hg'?'A':null,devicePid:getDevicePlayerId(),authUid:fbAuth.currentUser.uid,online:true,lastSeen:now,deckSummary:hostDeckSummary};
-    var roomData={code:code,hostId:playerId,hostName:hostName,archenemyId:isArchFmt?playerId:null,format:format,maxPlayers:maxPlayers,startingLife:startingLife,open:true,isPublic:isPublic,friendlyMulls:friendlyMulls,bracket:bracket,description:description,modifiers:modifiers,created:now,lastActive:now,currentTurn:playerId,turnChangedAt:now,turnCycle:1,seatOrder:[playerId],members:{},slots:{},players:pd,spectators:{}};
+    var roomData={code:code,hostId:playerId,hostName:hostName,archenemyId:isArchFmt?playerId:null,format:format,maxPlayers:maxPlayers,startingLife:startingLife,open:true,isPublic:isPublic,friendlyMulls:friendlyMulls,bracket:bracket,description:description,modifiers:modifiers,created:now,lastActive:now,currentTurn:playerId,turnChangedAt:now,turnCycle:1,turnState:{currentTurn:playerId,turnChangedAt:now,turnCycle:1,turnReady:{}},seatOrder:[playerId],members:{},slots:{},players:pd,spectators:{}};
     roomData.members[fbAuth.currentUser.uid]=playerId;
     roomData.slots[fbAuth.currentUser.uid]=playerId;
     if(format==='2hg')roomData.teamLife={A:startingLife,B:startingLife};
@@ -3048,7 +3103,7 @@ async function doJoinRoom(code){
       var slotTx=await slotRef.transaction(function(current){if(current)return current;return playerId;});
       if(!slotTx.committed||slotTx.snapshot.val()!==playerId){await reservationDisconnect.cancel().catch(function(){});toast('Room is full or closed');return;}
       var now=Date.now();
-      var playerData={name:joinName,life:room.startingLife||20,poison:0,experience:0,energy:0,customCounters:{},joined:now,seat:cryptoRandomIndex(2147483647),slotOwner:fbAuth.currentUser.uid,team:null,devicePid:devPid,authUid:fbAuth.currentUser.uid,online:false,lastSeen:now,deckSummary:joinDeckSummary};
+      var playerData={name:joinName,life:room.startingLife||20,poison:0,experience:0,energy:0,customCounters:{},joined:now,seat:cryptoRandomIndex(2147483647),slotOwner:fbAuth.currentUser.uid,team:room.format==='2hg'?nextRoomTeam(room.players||{}):null,devicePid:devPid,authUid:fbAuth.currentUser.uid,online:false,lastSeen:now,deckSummary:joinDeckSummary};
       try{
         // Existing rules authorize deletion only once our UID slot exists.
         // Register after the claim and roll the claim back if registration fails.
@@ -3123,7 +3178,7 @@ function initSpectatorGame(roomCode,pid){
   var roomRef=fbDB.ref('rooms/'+roomCode);
   registerRoomPresence(roomCode,pid,true,{name:G.game.playerName,devicePid:getDevicePlayerId(),joined:Date.now()});
   G.listeners.push(stopRoomPresence);
-  var u1=roomRef.on('value',function(snap){var r=snap.val();if(!r)return;G.game.players=r.players||{};G.game.currentTurn=r.currentTurn||null;G.game.turnCycle=r.turnCycle||1;updatePlayersStrip();if(G.currentZone==='opponents')renderOpponentsZone();});
+  var u1=roomRef.on('value',function(snap){var r=snap.val();if(!r)return;var turn=getRoomTurnState(r);G.game.players=r.players||{};G.game.currentTurn=turn.currentTurn;G.game.turnCycle=turn.turnCycle;G.game.turnReady=turn.turnReady;updatePlayersStrip();if(G.currentZone==='opponents')renderOpponentsZone();});
   G.listeners.push(function(){roomRef.off('value',u1);});
   var bfRef=fbDB.ref('rooms/'+roomCode+'/publicZones');
   var u2=bfRef.on('value',function(snap){G.cachedPublicZones=snap.val()||{};updatePlayersStrip();if(G.currentZone==='opponents')renderOpponentsZone();});
@@ -3237,6 +3292,7 @@ function initGame(roomCode,playerId,isRejoin){
     G.cachedPrivateStates={};
     registerRoomPresence(roomCode,playerId,false);
     G.listeners.push(stopRoomPresence);
+    var lastOppPlayersRenderKey='';
     var u1=roomRef.on('value',function(snap){var room=snap.val();if(!room)return;if(G.screen!=='game')return;
       if(room.kicked&&room.kicked[myPid]){G._noSync=false;G.listeners.forEach(function(f){try{f();}catch(e){}});G.listeners=[];showScreen('home');document.getElementById('game-fab').style.display='none';toast('You were kicked from the game.',5000);return;}
       var prevMsLife=G.game.myState.life;var prevMsPoison=G.game.myState.poison;var prevMsExp=G.game.myState.experience;var prevMsEnergy=G.game.myState.energy;var prevMsCC=G.game.myState.customCounters;
@@ -3274,7 +3330,10 @@ function initGame(roomCode,playerId,isRejoin){
           if(G.game.players[myPid])G.game.players[myPid].life=G.game.myState.life;
         }
       }
-      G.game.currentTurn=room.currentTurn||myPid;G.game.turnCycle=room.turnCycle||1;G.game.turnReady=room.turnReady||{};checkTurnTransition();updatePlayersStrip();updateTurnUI();updateZoneCounts();updateMyStats();if(G.currentZone==='opponents')renderOpponentsZone();
+      var turnState=getRoomTurnState(room);
+      G.game.currentTurn=turnState.currentTurn||myPid;G.game.turnCycle=turnState.turnCycle||1;G.game.turnReady=turnState.turnReady||{};checkTurnTransition();updatePlayersStrip();updateTurnUI();updateZoneCounts();updateMyStats();
+      var oppPlayersKey=opponentPlayersRenderKey(G.game.players);
+      if(G.currentZone==='opponents'&&oppPlayersKey!==lastOppPlayersRenderKey){lastOppPlayersRenderKey=oppPlayersKey;renderOpponentsZone();}
       if(G.game.isHost)syncPublicRoomIndex(roomCode,room).catch(function(e){console.warn('Public room index update failed:',e);});
       reconcileRoom(roomRef,myPid).catch(function(e){console.warn('Room reconciliation failed:',e);});
     });
@@ -3891,15 +3950,24 @@ function pcPlaneswalkOrSetup(){
   if(!G.planechaseState.deck.length&&!G.planechaseState.plane){pcSetupDeck();return;}
   pcPlaneswalk();
 }
+function opponentPlayersRenderKey(players){
+  return JSON.stringify(orderedPlayerIds(players).map(function(pid){
+    var p=players[pid]||{};
+    return [pid,p.name||'',p.life,p.poison,p.experience,p.energy,p.online,p.departure,p.team,p.seat];
+  }));
+}
 function renderOpponentsZone(){var el=document.getElementById('opponents-content');if(!el)return;var banner=renderPlanechaseBanner();var opponents=Object.entries(G.game.players||{}).filter(function(e){return e[0]!==G.game.playerId;});if(!opponents.length){el.innerHTML=banner+'<div class="empty-state"><div class="empty-state-icon">\u{1F30D}</div><div style="font-size:.83rem">No opponents yet</div></div>';return;}var zones=G.cachedPublicZones||{};el.innerHTML=banner+opponents.map(function(entry){return renderOpponentSection(entry[0],entry[1],zones[entry[0]]||null);}).join('');attachOpponentHandlers(el);loadOpponentImages(el);}
-function oppCardImgFromCache(name,face){if(!name)return null;var c=sfCache[name];if(!c)return null;return cardImg(c,face||0)||cardImg(c,0);}
+function oppCardImgFromCache(name,face){if(!name)return null;var c=getCachedScryfallCard(name);if(!c)return null;return cardImg(c,face||0)||cardImg(c,0);}
 function loadOpponentImages(el){el.querySelectorAll('img.opp-lazy[data-cardname]').forEach(function(img){
   // data-img is set by oppMini when c.image (custom art) or sfCache was already available.
   // Don't overwrite — that would stomp custom arts with the default Scryfall printing.
   if(img.dataset.img){return;}
   var name=img.dataset.cardname;var face=parseInt(img.dataset.face||'0')||0;
   var fc=oppCardImgFromCache(name,face);if(fc){img.src=fc;img.dataset.img=fc;return;}
-  fetchCard(name).then(function(c){if(c){var url=cardImg(c,face)||cardImg(c,0);if(url){img.src=url;img.dataset.img=url;}}});
+  fetchCard(name).then(function(c){
+    if(!c||!img.isConnected||img.dataset.cardname!==name)return;
+    var url=cardImg(c,face)||cardImg(c,0);if(url){img.src=url;img.dataset.img=url;}
+  });
 });}
 
 function renderOpponentSection(pid,p,pz){
@@ -4316,16 +4384,18 @@ async function endMyTurn(){
   var nextPid, newCycle;
   if(G.game.roomCode&&G.game.roomCode!=='LOCAL'){
     try{
-      var tx=await fbDB.ref('rooms/'+G.game.roomCode).transaction(function(room){
-        if(!room)return room;
-        var ids=orderedPlayerIds(room.players||{}).filter(function(pid){return roomPlayerIsPresent((room.players||{})[pid]);});
-        if(!ids.length||room.currentTurn!==G.game.playerId)return room;
-        var idx=ids.indexOf(room.currentTurn),nextIdx=(idx+1)%ids.length;
-        room.currentTurn=ids[nextIdx];room.turnCycle=(room.turnCycle||1)+(nextIdx===0?1:0);
-        room.turnChangedAt=Date.now();room.turnReady={};return room;
+      var ids=pids.slice();
+      var turnRef=fbDB.ref('rooms/'+G.game.roomCode+'/turnState');
+      var tx=await turnRef.transaction(function(state){
+        state=state||{currentTurn:G.game.currentTurn,turnCycle:G.game.turnCycle||1,turnChangedAt:Date.now(),turnReady:G.game.turnReady||{}};
+        if(state.currentTurn!==G.game.playerId)return;
+        var idx=ids.indexOf(state.currentTurn),nextIdx=(idx+1)%ids.length;
+        state.currentTurn=ids[nextIdx];state.turnCycle=(state.turnCycle||1)+(nextIdx===0?1:0);
+        state.turnChangedAt=Date.now();state.turnReady={};return state;
       });
-      if(!tx.committed||!tx.snapshot.val()||tx.snapshot.val().currentTurn===G.game.playerId&&pids.length>1){return;}
+      if(!tx.committed||!tx.snapshot.val()){toast('Turn changed before your update reached the room.');return;}
       var updated=tx.snapshot.val();nextPid=updated.currentTurn;newCycle=updated.turnCycle;
+      G.game.turnReady=updated.turnReady||{};
       sendAction('end_turn',{});
     }catch(e){toast('Failed to end turn: '+(e&&e.message||e));return;}
   }else{
@@ -4340,48 +4410,57 @@ async function endMyTurn(){
 // into double-advancing the turn.
 async function endMyTurn2hg(){
   var myPid=G.game.playerId;
-  toast('Readied up \u2014 waiting for your teammate to end the turn too\u2026');
-  logAction('Ready to pass the team turn');
   try{
-    await fbDB.ref('rooms/'+G.game.roomCode).transaction(function(room){
-      if(!room)return room;
-      var teams=computeTeams(room.players||{});
-      var activeTeam=teams[room.currentTurn];
-      var ready=Object.assign({},room.turnReady||{});
+    var players=G.game.players||{};
+    var teams=computeTeams(players);
+    var turnRef=fbDB.ref('rooms/'+G.game.roomCode+'/turnState');
+    var tx=await turnRef.transaction(function(state){
+      state=state||{currentTurn:G.game.currentTurn,turnCycle:G.game.turnCycle||1,turnChangedAt:Date.now(),turnReady:G.game.turnReady||{}};
+      if(!state.currentTurn)return;
+      var activeTeam=teams[state.currentTurn];
+      if(!activeTeam||teams[myPid]!==activeTeam)return;
+      var ready=Object.assign({},state.turnReady||{});
       ready[myPid]=true;
-      var members=Object.keys(room.players||{}).filter(function(pid){return teams[pid]===activeTeam&&roomPlayerIsPresent(room.players[pid]);});
+      var members=Object.keys(players).filter(function(pid){return teams[pid]===activeTeam&&roomPlayerIsPresent(players[pid]);});
       var allReady=members.length>0&&members.every(function(pid){return ready[pid];});
       if(allReady){
         var otherTeam=activeTeam==='A'?'B':'A';
-        var order=orderedPlayerIds(room.players||{});
-        var nextPid=order.filter(function(pid){return teams[pid]===otherTeam&&roomPlayerIsPresent(room.players[pid]);})[0]||room.currentTurn;
-        room.currentTurn=nextPid;
-        room.turnCycle=(room.turnCycle||1)+(otherTeam==='A'?1:0);
-        room.turnReady={};room.turnChangedAt=Date.now();
+        var order=orderedPlayerIds(players);
+        var nextPid=order.filter(function(pid){return teams[pid]===otherTeam&&roomPlayerIsPresent(players[pid]);})[0]||state.currentTurn;
+        state.currentTurn=nextPid;
+        state.turnCycle=(state.turnCycle||1)+(otherTeam==='A'?1:0);
+        state.turnReady={};state.turnChangedAt=Date.now();
       }else{
-        room.turnReady=ready;
+        state.turnReady=ready;
       }
-      return room;
+      return state;
     });
+    if(!tx.committed){toast('Could not ready up: your team turn has changed.');return;}
+    var updated=tx.snapshot.val();
+    G.game.currentTurn=updated.currentTurn;G.game.turnCycle=updated.turnCycle||G.game.turnCycle;G.game.turnReady=updated.turnReady||{};
+    updatePlayersStrip();updateTurnUI();
+    if(teams[updated.currentTurn]===teams[myPid]){toast('Readied up — waiting for your teammate to end the turn too…');logAction('Ready to pass the team turn');}
+    else sendAction('end_turn',{});
   }catch(e){toast('Failed to ready up: '+(e&&e.message||e));}
 }
 function beginMyTurn(){untapAll();toast('Your turn! All permanents untapped.');logAction('Beginning of turn — untapped all');}
 async function forcePassTurn(){
   if(!G.game.isHost||!G.game.roomCode||G.game.roomCode==='LOCAL'){toast('Only the room host can force-pass an online game turn');return;}
   try{
-    var tx=await fbDB.ref('rooms/'+G.game.roomCode).transaction(function(room){
-      if(!room||room.hostId!==G.game.playerId)return room;
-      var all=orderedPlayerIds(room.players||{}),currentIdx=all.indexOf(room.currentTurn);
-      var present=all.filter(function(pid){return pid!==room.currentTurn&&roomPlayerIsPresent((room.players||{})[pid]);});
-      if(!present.length)return room;
+    var players=G.game.players||{};
+    var tx=await fbDB.ref('rooms/'+G.game.roomCode+'/turnState').transaction(function(state){
+      state=state||{currentTurn:G.game.currentTurn,turnCycle:G.game.turnCycle||1,turnChangedAt:Date.now(),turnReady:G.game.turnReady||{}};
+      var all=orderedPlayerIds(players),currentIdx=all.indexOf(state.currentTurn);
+      var present=all.filter(function(pid){return pid!==state.currentTurn&&roomPlayerIsPresent(players[pid]);});
+      if(!present.length)return;
       var next=present[0];
       for(var i=1;i<=all.length;i++){
         var candidate=all[(Math.max(0,currentIdx)+i)%all.length];
         if(present.indexOf(candidate)!==-1){next=candidate;break;}
       }
       var nextIdx=all.indexOf(next);
-      room.currentTurn=next;room.turnCycle=(room.turnCycle||1)+(currentIdx>=0&&nextIdx<=currentIdx?1:0);
-      room.turnChangedAt=Date.now();room.turnReady={};return room;
+      state.currentTurn=next;state.turnCycle=(state.turnCycle||1)+(currentIdx>=0&&nextIdx<=currentIdx?1:0);
+      state.turnChangedAt=Date.now();state.turnReady={};return state;
     });
     if(tx.committed){sendAction('end_turn',{});toast('Turn passed by the host');}
   }catch(e){console.error(e);toast('Could not pass the stalled turn: '+(e&&e.message||e));}
@@ -5764,7 +5843,8 @@ function openGameMenu(){
 function confirmResetGame(){
   if(!confirm('Reset the game for everyone? All players will reshuffle and redraw their opening hand.'))return;
   if(G.game.roomCode&&G.game.roomCode!=='LOCAL'){
-    fbDB.ref('rooms/'+G.game.roomCode).update({turnCycle:1,currentTurn:G.game.playerId});
+    var resetTurn={currentTurn:G.game.playerId,turnCycle:1,turnChangedAt:Date.now(),turnReady:{}};
+    fbDB.ref('rooms/'+G.game.roomCode).update({turnCycle:1,currentTurn:G.game.playerId,turnState:resetTurn});
     sendAction('reset_game',{});
   }
   G.game.turnCycle=1;
@@ -5858,12 +5938,16 @@ function openKickModal(){
         if(room.players)room.players[pid]=null;
         Object.keys(room.members||{}).forEach(function(uid){if(room.members[uid]===pid)room.members[uid]=null;});
         if(kickedPlayer&&kickedPlayer.slotOwner&&room.slots)room.slots[kickedPlayer.slotOwner]=null;
+        var turnState=getRoomTurnState(room);
+        if(turnState.turnReady)turnState.turnReady[pid]=null;
         if(room.turnReady)room.turnReady[pid]=null;
         var remaining=orderedPlayerIds(room.players||{}).filter(function(id){return roomPlayerIsPresent((room.players||{})[id]);});
-        if(room.currentTurn===pid&&remaining.length){
-          room.currentTurn=remaining[Math.max(0,oldIdx)%remaining.length]||remaining[0];
-          room.turnChangedAt=Date.now();room.turnReady={};
+        if(turnState.currentTurn===pid&&remaining.length){
+          turnState.currentTurn=remaining[Math.max(0,oldIdx)%remaining.length]||remaining[0];
+          turnState.turnChangedAt=Date.now();turnState.turnReady={};
+          room.currentTurn=turnState.currentTurn;room.turnChangedAt=turnState.turnChangedAt;room.turnReady={};
         }
+        room.turnState=turnState;
         room.seatOrder=orderedPlayerIds(room.players||{});
         room.lastActive=Date.now();
         return room;
