@@ -1,6 +1,39 @@
 # ScryTable multiplayer reliability changelog
 
-Version: 3.0.1
+Version: 3.1.0
+
+## 3.1.0 turn permissions and opponent card lookup caching
+
+- Move regular turns, 2HG ready-up, and host force-pass transactions from the full room record to a dedicated `/turnState` path.
+- Add an authenticated active-player/team/host write rule for turn state; room creation writes both nested and legacy flat turn fields, while clients accept legacy rooms and migrate on first turn action.
+- Assign a balanced team to newly joining 2HG players immediately so the scoped teammate permission can validate their ready-up.
+- Avoid re-rendering opponent boards for unrelated room snapshots when the displayed player data did not change.
+- Cache Scryfall named lookups case-insensitively, deduplicate in-flight requests, and briefly cache misses/transient failures so repeated board renders and taps do not repeat API requests.
+- Bump service-worker cache to v12.
+- The updated `firebase-rules-snippet.json` must be published in Firebase Realtime Database Rules before `/turnState` writes are permitted.
+
+## 3.0.5 anonymous-auth rejoin fix
+
+- Reclaim an existing multiplayer seat only when both its local device ID and Firebase anonymous-auth UID match.
+- If browser or preview storage rotates the anonymous Firebase account while preserving local device data, join with a fresh seat instead of attempting an owner change that Realtime Database Rules correctly deny.
+- Restore the Join button after handled failures and bump the service-worker shell cache to v8.
+
+## 3.0.4 iPhone viewport fit
+
+- Use the full layout viewport in iOS standalone mode instead of the shorter visual viewport, preventing top safe-area crowding and the matching empty strip at the bottom.
+- Moved installation and offline guidance into the main How To guide and removed the separate Home card.
+- Bumped the service-worker shell cache to v7.
+
+## 3.0.3 Safari icon discovery fix
+
+- Added a conventional root `/favicon.ico`, a PNG favicon, and root Apple touch-icon fallbacks so Safari never has to generate a letter tile.
+- Moved active logo and manifest icon references to root-level versioned assets for compatibility with Cloudflare static-asset deployments.
+- Bumped the service-worker shell cache to v6.
+
+## 3.0.2 iOS multiplayer and branding fix
+
+- Added the missing `cryptoRandomIndex` helper used when hosting or joining an online room, with secure random generation and a compatibility fallback.
+- Versioned the logo and install-icon URLs again and bumped the service-worker shell cache to v5 so Cloudflare and existing PWA caches fetch the supplied artwork.
 
 ## 3.0.1 branding update
 
